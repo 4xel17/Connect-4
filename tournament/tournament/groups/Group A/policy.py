@@ -1,236 +1,173 @@
 import numpy as np
+import math
 from connect4.policy import Policy
 
 
+class MCTSNode:
+    def __init__(self, state, parent=None):
+        self.state = state.copy()
+        self.parent = parent
+        self.children = {}
+        self.N = 0
+        self.W = 0.0
 
-TRAINING_GAMES = 1_000 # partidas de entrenamiento mount 
-EPSILON = 0.2  # probabilidad de movimiento aleatorio en entrenamiento
-LEARNING_RATE  = 0.1      # lr: qué tan grande es cada actualización de V(s)
-DISCOUNT       = 0.95     # gamma: cuánto peso tienen los estados futuros
- 
-ROWS = 6
-COLS = 7
-EMPTY = 0
-
- 
-class ADPAgent(Policy): #agente oficial
- 
-    trained = False
-    V_global = {}
+    def ucb1(self, c=1.4):
+        if self.N == 0:
+            return float("inf")
+        return (self.W / self.N) + c * math.sqrt(math.log(self.parent.N) / self.N)
 
-    def mount(self, *args, **kwargs):
 
-        # si ya entrenó, reutiliza
-        if ADPAgent.trained:
-            self.V = ADPAgent.V_global
-            return
+class OhYes(Policy):
 
-        self.V = {} #empieza con un diccionario vacio, el agente no sabe nada 
- 
-        for _ in range(TRAINING_GAMES): #el agente juega con el mismo  aprtidas aleatorias para aprender  
-            board = np.zeros((ROWS, COLS), dtype=int) #crea un tablero vacio 
-            path = [] #guarda todos los estados del tablero durante la partida 
-            player = 1 #empieza el jugador 1 o max
+    def __init__(self):
+        self.n_simulations = 120 
 
+    def mount(self, action_timeout=None):
+        self.n_simulations = max(100, int((action_timeout or 1.0) * 120))
 
-            #loop del juego 
-            while True: #aqui se juega la partida completa hasta que termine 
-                cols_libres = _cols_libres(board) #busca columnas disponibles 
-                if not cols_libres: #si no hay movimientos, empate 
-                    break
 
-                #exploracion =epsilon 
- 
-                if np.random.rand() < EPSILON: #a veces juega random  para aprender cosas nuevas 
-                    #caso 1
-                    accion = int(np.random.choice(cols_libres))
-                else:
-                    #caso 2 usa lo que ha aprendido v
-                    accion = _mejor_accion(board, player, self.V, cols_libres)
+    # UTILITIES
 
-                #guarda experiencia 
-                #el estado del tablero  y quien jugo ( para aprneder despues)
-                path.append((board.copy(), player))
-                #simula la jugada 
-                board = _colocar(board, accion, player)
-                #verifica si termino 
-                ganador = _get_winner(board)
-                #si alguien ganó o empate termina la partida 
-                if ganador != 0 or not _cols_libres(board):
-                    break
-                #cambia de jugador 
-                player = -player
- 
 
-            ganador = _get_winner(board)
-            #el agente aprende de toda la partid, to update recoore la parrida hacia atras 
-            _td_update(path, ganador, self.V, LEARNING_RATE, DISCOUNT) #aca el agente aprende
- 
-        ADPAgent.V_global = self.V
-        ADPAgent.trained = True
+    def _available(self, s):
+        return [c for c in range(7) if s[0, c] == 0]
 
-    def act(self, s: np.ndarray) -> int:
+    def _apply(self, s, col, player):
+        ns = s.copy()
+        for r in range(5, -1, -1):
+            if ns[r, col] == 0:
+                ns[r, col] = player
+                break
+        return ns
 
-        # seguridad por si mount no fue llamado
-        if not hasattr(self, "V"):
-            self.V = {}
+    def _check_win(self, s, player):
+        for r in range(6):
+            for c in range(4):
+                if all(s[r, c+i] == player for i in range(4)):
+                    return True
 
-        cols_libres = _cols_libres(s)
+        for r in range(3):
+            for c in range(7):
+                if all(s[r+i, c] == player for i in range(4)):
+                    return True
 
-        if not cols_libres:
-            return 0
+        for r in range(3):
+            for c in range(4):
+                if all(s[r+i, c+i] == player for i in range(4)):
+                    return True
 
-        return int(
-            _mejor_accion(
-                s,
-                1,
-                self.V,
-                cols_libres
-            )
-        )
+        for r in range(3, 6):
+            for c in range(4):
+                if all(s[r-i, c+i] == player for i in range(4)):
+                    return True
 
+        return False
 
-def _state_key(board):
+    def _whose_turn(self, s):
+        return 1 if np.sum(s == 1) <= np.sum(s == -1) else -1
 
-    return str(board.reshape(ROWS * COLS))
+    def _winning_move(self, s, player):
+        for c in self._available(s):
+            if self._check_win(self._apply(s, c, player), player):
+                return c
+        return None
 
 
-def _cols_libres(board):
+    # SIMULATION LIGERA
 
-    return [
-        c for c in range(COLS)
-        if board[0, c] == EMPTY
-    ]
 
+    def _simulate(self, s, my_player):
+        s = s.copy()
+        player = my_player
 
-def _colocar(board, col, player):
+        for _ in range(30):
+            av = self._available(s)
+            if not av:
+                return 0.0
 
-    nuevo = board.copy()
+            # ganar inmediato
+            for c in av:
+                if self._check_win(self._apply(s, c, player), player):
+                    return 1.0 if player == my_player else -1.0
 
-    for r in reversed(range(ROWS)):
+            # random ligero
+            col = int(np.random.choice(av))
+            s = self._apply(s, col, player)
 
-        if nuevo[r, col] == EMPTY:
+            if self._check_win(s, player):
+                return 1.0 if player == my_player else -1.0
 
-            nuevo[r, col] = player
-            break
+            player = -player
 
-    return nuevo
-
-
-def _get_winner(board):
-
-    for r in range(ROWS):
-
-        for c in range(COLS):
-
-            p = board[r, c]
-
-            if p == 0:
-                continue
-
-            # horizontal
-            if (
-                c + 3 < COLS
-                and all(board[r, c+i] == p for i in range(4))
-            ):
-                return p
-
-            # vertical
-            if (
-                r + 3 < ROWS
-                and all(board[r+i, c] == p for i in range(4))
-            ):
-                return p
-
-            # diagonal derecha
-            if (
-                r + 3 < ROWS
-                and c + 3 < COLS
-                and all(board[r+i, c+i] == p for i in range(4))
-            ):
-                return p
-
-            # diagonal izquierda
-            if (
-                r + 3 < ROWS
-                and c - 3 >= 0
-                and all(board[r+i, c-i] == p for i in range(4))
-            ):
-                return p
-
-    return 0
-
-
-def _get_value(board, player, V):
-
-    tablero_perspectiva = board * player
-
-    key = _state_key(tablero_perspectiva)
-
-    return V.get(key, 0.0)
-
-
-def _mejor_accion(board, player, V, cols_libres):
-
-    mejor_valor = -np.inf
-
-    mejor_col = cols_libres[
-        len(cols_libres) // 2
-    ]
-
-    # priorizar centro
-    cols_ordenadas = sorted(
-        cols_libres,
-        key=lambda c: abs(c - COLS // 2)
-    )
-
-    for col in cols_ordenadas:
-
-        sucesor = _colocar(
-            board,
-            col,
-            player
-        )
-
-        valor = _get_value(
-            sucesor,
-            player,
-            V
-        )
-
-        if valor > mejor_valor:
-
-            mejor_valor = valor
-            mejor_col = col
-
-    return mejor_col
-
-
-def _td_update(path, ganador, V, lr, discount):
-
-    reward = {
-        1: 1.0,
-        -1: -1.0
-    }.get(ganador, 0.0)
-
-    for board, player in reversed(path):
-
-        state = board * player
-        key = _state_key(state)
-
-        v = V.get(key, 0.0)
-
-        V[key] = v + lr * (reward - v)
-
-        reward = discount * reward
-
-def _recompensa(ganador, player):
-
-    if ganador == player:
-        return 1.0
-
-    elif ganador == -player:
-        return -1.0
-
-    else:
         return 0.0
+
+  
+    # BACKPROP
+ 
+
+    def _backprop(self, node, reward):
+        while node is not None:
+            node.N += 1
+            node.W += reward
+            reward = -reward
+            node = node.parent
+
+    # ACT (FINAL POLICY)
+
+
+    def act(self, s):
+
+        my_player = self._whose_turn(s)
+        opp = -my_player
+
+        #  1. ganar inmediato
+        win = self._winning_move(s, my_player)
+        if win is not None:
+            return win
+
+        #  2. bloquear rival
+        block = self._winning_move(s, opp)
+        if block is not None:
+            return block
+
+   
+        # MCTS
+ 
+        root = MCTSNode(s)
+
+        for _ in range(self.n_simulations):
+
+            node = root
+
+            # Selection
+            while node.children:
+                av = self._available(node.state)
+                unexplored = [a for a in av if a not in node.children]
+
+                if unexplored:
+                    break
+
+                node = max(node.children.values(), key=lambda n: n.ucb1())
+
+            # Expansion
+            av = self._available(node.state)
+            if av:
+                col = int(np.random.choice(av))
+                player = self._whose_turn(node.state)
+                new_state = self._apply(node.state, col, player)
+
+                child = MCTSNode(new_state, node)
+                node.children[col] = child
+                node = child
+
+            # Simulation
+            reward = self._simulate(node.state, my_player)
+
+            # Backprop
+            self._backprop(node, reward)
+
+        # mejor acción
+        if not root.children:
+            return int(np.random.choice(self._available(s)))
+
+        return int(max(root.children, key=lambda c: root.children[c].N))

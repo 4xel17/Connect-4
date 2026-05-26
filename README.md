@@ -6,6 +6,10 @@
 
 # OhYes – Agente Connect-4 con Online Policy Improvement
 
+el agente se encuentra en: Groups/group A/policy.py
+el ipynb se encuentra en: Groups/group A/entrega.ipynb
+
+
 ## Descripción
 
 `OhYes` es un agente para Connect-4 que implementa **Online Policy Improvement (OPI)**: un proceso de refinamiento de política en tiempo real que, en cada estado del juego, estima qué acción es más prometedora antes de comprometerse con ella.

@@ -6,8 +6,8 @@
 
 # OhYes – Agente Connect-4 con Online Policy Improvement
 
-el agente se encuentra en: Groups/group A/policy.py
-el ipynb se encuentra en: Groups/group A/entrega.ipynb
+el agente se encuentra en: Groups/group A/policy.py.
+el ipynb se encuentra en: Groups/group A/entrega.ipynb.
 
 
 ## Descripción
